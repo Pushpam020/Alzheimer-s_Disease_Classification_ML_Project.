@@ -19,11 +19,34 @@ def load_pickle_safe(path):
         st.error(f"Failed to load {path}: {e}")
         st.stop()
 
-def predict_and_proba(model, scaler, input_dict, numeric_cols):
+def predict_and_proba(model, scaler, input_dict, numeric_cols, features_order):
+    # Build dataframe with proper feature order (add missing features as 0)
     X = pd.DataFrame([input_dict])
-    X[numeric_cols] = scaler.transform(X[numeric_cols])
-    proba = model.predict_proba(X)[:,1][0] if hasattr(model, "predict_proba") else None
-    pred = int(model.predict(X)[0])
+    # ensure all features in features_order are present
+    for f in features_order:
+        if f not in X.columns:
+            X[f] = 0
+    X = X[features_order]  # reorder to match training
+    
+    # Scale numeric columns if scaler is provided
+    cols_to_scale = [c for c in numeric_cols if c in X.columns]
+    if len(cols_to_scale) > 0 and scaler is not None:
+        try:
+            X[cols_to_scale] = scaler.transform(X[cols_to_scale])
+        except Exception as e:
+            st.error(f"Scaler transform failed: {e}")
+            st.stop()
+    # predict
+    try:
+        if hasattr(model, "predict_proba"):
+            proba = float(model.predict_proba(X)[:, 1][0])
+        else:
+            proba = None
+        pred = int(model.predict(X)[0])
+    except Exception as e:
+        st.error(f"Prediction failed: {e}")
+        st.stop()
+
     return pred, proba
 
 def risk_label(prob):
@@ -160,20 +183,34 @@ numeric_cols = [
 
 if st.button("Predict"):
     with st.spinner("Predicting..."):
-        pred, proba = predict_and_proba(model, scaler, input_dict, numeric_cols)
+        pred, proba = predict_and_proba(model, scaler, input_dict, numeric_cols, features_order)
         label, color = risk_label(proba)
-        st.markdown(f"### Prediction: **{'Alzheimer\\'s' if pred==1 else 'No Alzheimer'}**")
+
+        # --- SAFELY format label for display (no escaping issues) ---
+        display_label = "Alzheimer's" if pred == 1 else "No Alzheimer"
+        st.markdown(f"### Prediction: **{display_label}**")
+
         if proba is not None:
             st.markdown(f"**Risk probability:** {proba:.3f}")
-        st.markdown(f"<div style='padding:10px;background:{color};color:white;border-radius:6px'>{label}</div>", unsafe_allow_html=True)
+
+        # colored risk strip
+        st.markdown(
+            f"<div style='padding:10px;background:{color};color:white;border-radius:6px;display:inline-block'>{label}</div>",
+            unsafe_allow_html=True
+        )
 
         st.subheader("Input Summary")
         st.dataframe(pd.DataFrame([input_dict]))
 
         if hasattr(model, "feature_importances_"):
-            imp = pd.Series(model.feature_importances_, index=features_order).sort_values(ascending=False)[:10]
-            st.subheader("Top features (model importance)")
-            st.bar_chart(imp)
+            # try to map feature importances to features_order length
+            try:
+                imp = pd.Series(model.feature_importances_, index=features_order).sort_values(ascending=False)[:10]
+                st.subheader("Top features (model importance)")
+                st.bar_chart(imp)
+            except Exception:
+                # fallback if lengths mismatch
+                st.info("Model has feature_importances_ but mapping failed (length mismatch).")
 else:
     st.info("Fill patient features in the sidebar and click Predict.")
 
