@@ -6,12 +6,14 @@ import os
 
 st.set_page_config(page_title="Alzheimer's Disease Classifier", layout="wide")
 
-# -----------------------
-# Helper functions
-# -----------------------
+# ---------------------------------------------------
+# Helper Functions
+# ---------------------------------------------------
+
 def load_pickle_safe(path):
+    """Safely loads a pickle file and handles errors."""
     if not os.path.exists(path):
-        st.error(f"Required file not found: {path}. Upload this file to the repo root or use the sidebar uploader.")
+        st.error(f"Missing file: {path}. Add it to repo root or upload via sidebar.")
         st.stop()
     try:
         return joblib.load(path)
@@ -19,124 +21,161 @@ def load_pickle_safe(path):
         st.error(f"Failed to load {path}: {e}")
         st.stop()
 
+
 def predict_and_proba(model, scaler, input_dict, numeric_cols, features_order):
-    # Build dataframe with proper feature order (add missing features as 0)
+    """
+    Handles scaler-transform robustness:
+    - Matches expected feature names
+    - Fills missing columns with zeros
+    - Falls back to array transform if needed
+    """
     X = pd.DataFrame([input_dict])
-    # ensure all features in features_order are present
+
+    # Ensure all required features exist
     for f in features_order:
         if f not in X.columns:
             X[f] = 0
-    X = X[features_order]  # reorder to match training
-    
-    # Scale numeric columns if scaler is provided
-    cols_to_scale = [c for c in numeric_cols if c in X.columns]
-    if len(cols_to_scale) > 0 and scaler is not None:
-        try:
-            X[cols_to_scale] = scaler.transform(X[cols_to_scale])
-        except Exception as e:
-            st.error(f"Scaler transform failed: {e}")
-            st.stop()
-    # predict
+
+    X = X[features_order]  # reorder correctly
+
+    # Try scaling robustly
     try:
-        if hasattr(model, "predict_proba"):
-            proba = float(model.predict_proba(X)[:, 1][0])
+        if hasattr(scaler, "feature_names_in_"):
+            expected = list(scaler.feature_names_in_)
+
+            # Build DataFrame with expected columns
+            X_exp = pd.DataFrame(columns=expected, index=[0])
+            for col in expected:
+                X_exp.at[0, col] = X[col] if col in X.columns else 0
+
+            # Convert numerical safely
+            for col in X_exp.columns:
+                try:
+                    X_exp[col] = pd.to_numeric(X_exp[col])
+                except:
+                    pass
+
+            scaled = scaler.transform(X_exp)
+            X_scaled_df = pd.DataFrame(scaled, columns=expected)
+
+            # Replace numeric columns
+            for col in numeric_cols:
+                if col in X_scaled_df:
+                    X[col] = X_scaled_df[col]
         else:
-            proba = None
+            # Fallback: scaler was trained on arrays
+            cols_to_scale = [c for c in numeric_cols if c in X.columns]
+            X[cols_to_scale] = scaler.transform(X[cols_to_scale].values)
+
+    except Exception as e1:
+        st.error(f"Scaler transform failed: {e1}")
+        st.stop()
+
+    # Predict
+    try:
         pred = int(model.predict(X)[0])
-    except Exception as e:
-        st.error(f"Prediction failed: {e}")
+        proba = model.predict_proba(X)[:, 1][0] if hasattr(model, "predict_proba") else None
+    except Exception as e2:
+        st.error(f"Prediction failed: {e2}")
         st.stop()
 
     return pred, proba
 
+
 def risk_label(prob):
+    """Returns color-coded risk label."""
     if prob is None:
         return "Unknown", "gray"
     if prob < 0.3:
-        return "Low risk", "#4caf50"
+        return "Low Risk", "#4caf50"
     elif prob < 0.7:
-        return "Moderate risk", "#ffc107"
+        return "Moderate Risk", "#ffc107"
     else:
-        return "High risk", "#f44336"
+        return "High Risk", "#f44336"
 
-# -----------------------
-# Try to load model and scaler from repo root
-# -----------------------
+
+# ---------------------------------------------------
+# Load Model + Scaler
+# ---------------------------------------------------
+
 MODEL_PATH = "best_alzheimers_model.pkl"
 SCALER_PATH = "scaler_alzheimers.pkl"
 
-uploaded_model = st.sidebar.file_uploader("Upload best_alzheimers_model.pkl", type=["pkl","joblib"])
-uploaded_scaler = st.sidebar.file_uploader("Upload scaler_alzheimers.pkl", type=["pkl","joblib"])
+model_file = st.sidebar.file_uploader("Upload best_alzheimers_model.pkl", type=["pkl"])
+scaler_file = st.sidebar.file_uploader("Upload scaler_alzheimers.pkl", type=["pkl"])
 
-if uploaded_model and uploaded_scaler:
-    try:
-        model = joblib.load(uploaded_model)
-        scaler = joblib.load(uploaded_scaler)
-        st.sidebar.success("Model & scaler loaded from uploads.")
-    except Exception as e:
-        st.sidebar.error("Uploaded files could not be loaded. See details below.")
-        st.sidebar.text(str(e))
-        st.stop()
+if model_file and scaler_file:
+    model = joblib.load(model_file)
+    scaler = joblib.load(scaler_file)
+    st.sidebar.success("Loaded model & scaler from uploads.")
 else:
-    # If not uploaded via UI, try loading from repo files
     if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH):
         model = load_pickle_safe(MODEL_PATH)
         scaler = load_pickle_safe(SCALER_PATH)
     else:
-        st.sidebar.info("Upload model & scaler via the sidebar, or add 'best_alzheimers_model.pkl' and 'scaler_alzheimers.pkl' to the repo root.")
+        st.sidebar.error("Upload model & scaler or add them to repo.")
         st.stop()
 
-st.title("🧠 Alzheimer's Disease Risk Classifier")
-st.write("Use the sidebar to input patient features. The app uses a pre-trained classifier and a StandardScaler to estimate Alzheimer's risk.")
+# ---------------------------------------------------
+# UI
+# ---------------------------------------------------
 
-# -----------------------
-# Sidebar inputs (example defaults)
-# -----------------------
-st.sidebar.header("Patient Features (example defaults)")
+st.title("🧠 Alzheimer’s Disease Risk Classifier")
+st.write("This app predicts Alzheimer’s probability using a trained ML model + StandardScaler.")
 
-age = st.sidebar.number_input("Age", min_value=60, max_value=100, value=72, step=1)
-gender = st.sidebar.selectbox("Gender", options=[0,1], format_func=lambda x: "Male" if x==0 else "Female", index=1)
-ethnicity = st.sidebar.selectbox("Ethnicity", options=[0,1,2,3], format_func=lambda x: ["Caucasian","African American","Asian","Other"][x])
-education = st.sidebar.selectbox("Education Level", options=[0,1,2,3], format_func=lambda x: ["None","High School","Bachelor's","Higher"][x])
-bmi = st.sidebar.number_input("BMI", min_value=10.0, max_value=50.0, value=25.0, step=0.1)
-smoking = st.sidebar.selectbox("Smoking", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
-alcohol = st.sidebar.number_input("Alcohol units/week", min_value=0.0, max_value=50.0, value=1.0, step=0.1)
-physical_activity = st.sidebar.number_input("Physical activity (hrs/week)", min_value=0.0, max_value=40.0, value=2.0, step=0.1)
-diet_quality = st.sidebar.slider("Diet quality (0-10)", 0, 10, 6)
-sleep_quality = st.sidebar.slider("Sleep quality (4-10)", 4, 10, 7)
-family_hist = st.sidebar.selectbox("Family history of Alzheimer's", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
-cardio = st.sidebar.selectbox("Cardiovascular disease", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
-diabetes = st.sidebar.selectbox("Diabetes", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
-depression = st.sidebar.selectbox("Depression", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
-head_injury = st.sidebar.selectbox("Head injury history", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
-hypertension = st.sidebar.selectbox("Hypertension", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
+st.sidebar.header("Patient Input Features")
 
-systolic = st.sidebar.number_input("Systolic BP", min_value=80, max_value=200, value=130, step=1)
-diastolic = st.sidebar.number_input("Diastolic BP", min_value=50, max_value=130, value=80, step=1)
-chol_total = st.sidebar.number_input("Cholesterol total", min_value=100, max_value=400, value=200, step=1)
-chol_ldl = st.sidebar.number_input("Cholesterol LDL", min_value=20, max_value=300, value=120, step=1)
-chol_hdl = st.sidebar.number_input("Cholesterol HDL", min_value=10, max_value=120, value=50, step=1)
-triglycerides = st.sidebar.number_input("Triglycerides", min_value=30, max_value=600, value=150, step=1)
+# ========== SIDEBAR INPUT ==========
+age = st.sidebar.number_input("Age", 60, 100, 72)
+gender = st.sidebar.selectbox("Gender", [0, 1], format_func=lambda x: "Male" if x == 0 else "Female")
+ethnicity = st.sidebar.selectbox("Ethnicity", [0,1,2,3], format_func=lambda x: ["Caucasian","African American","Asian","Other"][x])
+education = st.sidebar.selectbox("Education Level", [0,1,2,3], format_func=lambda x: ["None","High School","Bachelor's","Higher"][x])
+bmi = st.sidebar.number_input("BMI", 10.0, 50.0, 25.0)
 
-mmse = st.sidebar.number_input("MMSE (0-30)", min_value=0, max_value=30, value=27, step=1)
-functional = st.sidebar.number_input("Functional Assessment (0-10)", min_value=0, max_value=10, value=8, step=1)
-adl = st.sidebar.number_input("ADL (0-10)", min_value=0, max_value=10, value=8, step=1)
+smoking = st.sidebar.selectbox("Smoking", [0,1], format_func=lambda x: "No" if x==0 else "Yes")
+alcohol = st.sidebar.number_input("Alcohol Consumption (units/week)", 0.0, 30.0, 1.0)
+physical = st.sidebar.number_input("Physical Activity (hrs/week)", 0.0, 20.0, 2.0)
+diet = st.sidebar.slider("Diet Quality (0–10)", 0, 10, 6)
+sleep = st.sidebar.slider("Sleep Quality (4–10)", 4, 10, 7)
 
-memory_complaints = st.sidebar.selectbox("Memory complaints", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
-behavioral = st.sidebar.selectbox("Behavioral problems", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
-confusion = st.sidebar.selectbox("Confusion", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
-disorientation = st.sidebar.selectbox("Disorientation", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
-personality_changes = st.sidebar.selectbox("Personality changes", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
-difficulty_tasks = st.sidebar.selectbox("Difficulty completing tasks", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
-forgetfulness = st.sidebar.selectbox("Forgetfulness", options=[0,1], format_func=lambda x: "No" if x==0 else "Yes")
+family = st.sidebar.selectbox("Family History", [0,1])
+cardio = st.sidebar.selectbox("Cardiovascular Disease", [0,1])
+diabetes = st.sidebar.selectbox("Diabetes", [0,1])
+depression = st.sidebar.selectbox("Depression", [0,1])
+headinjury = st.sidebar.selectbox("Head Injury", [0,1])
+hypertension = st.sidebar.selectbox("Hypertension", [0,1])
 
-# feature order must match training
+sbp = st.sidebar.number_input("Systolic BP", 80, 200, 130)
+dbp = st.sidebar.number_input("Diastolic BP", 50, 130, 80)
+
+chol_total = st.sidebar.number_input("Cholesterol Total", 100, 400, 200)
+chol_ldl = st.sidebar.number_input("LDL", 20, 300, 120)
+chol_hdl = st.sidebar.number_input("HDL", 10, 120, 50)
+trig = st.sidebar.number_input("Triglycerides", 30, 600, 150)
+
+mmse = st.sidebar.number_input("MMSE Score", 0, 30, 27)
+functional = st.sidebar.number_input("Functional Assessment", 0, 10, 8)
+adl = st.sidebar.number_input("ADL Score", 0, 10, 8)
+
+memory = st.sidebar.selectbox("Memory Complaints", [0,1])
+behavior = st.sidebar.selectbox("Behavioral Problems", [0,1])
+conf = st.sidebar.selectbox("Confusion", [0,1])
+disorient = st.sidebar.selectbox("Disorientation", [0,1])
+personality = st.sidebar.selectbox("Personality Changes", [0,1])
+tasks = st.sidebar.selectbox("Difficulty Completing Tasks", [0,1])
+forget = st.sidebar.selectbox("Forgetfulness", [0,1])
+
+# ---------------------------------------------------
+# Input Dictionary (Order MUST match training)
+# ---------------------------------------------------
+
 features_order = [
     "Age","Gender","Ethnicity","EducationLevel","BMI","Smoking","AlcoholConsumption",
-    "PhysicalActivity","DietQuality","SleepQuality","FamilyHistoryAlzheimers","CardiovascularDisease",
-    "Diabetes","Depression","HeadInjury","Hypertension","SystolicBP","DiastolicBP","CholesterolTotal",
-    "CholesterolLDL","CholesterolHDL","CholesterolTriglycerides","MMSE","FunctionalAssessment",
-    "MemoryComplaints","BehavioralProblems","ADL","Confusion","Disorientation","PersonalityChanges",
+    "PhysicalActivity","DietQuality","SleepQuality","FamilyHistoryAlzheimers",
+    "CardiovascularDisease","Diabetes","Depression","HeadInjury","Hypertension",
+    "SystolicBP","DiastolicBP","CholesterolTotal","CholesterolLDL","CholesterolHDL",
+    "CholesterolTriglycerides","MMSE","FunctionalAssessment","MemoryComplaints",
+    "BehavioralProblems","ADL","Confusion","Disorientation","PersonalityChanges",
     "DifficultyCompletingTasks","Forgetfulness"
 ]
 
@@ -148,31 +187,31 @@ input_dict = {
     "BMI": bmi,
     "Smoking": smoking,
     "AlcoholConsumption": alcohol,
-    "PhysicalActivity": physical_activity,
-    "DietQuality": diet_quality,
-    "SleepQuality": sleep_quality,
-    "FamilyHistoryAlzheimers": family_hist,
+    "PhysicalActivity": physical,
+    "DietQuality": diet,
+    "SleepQuality": sleep,
+    "FamilyHistoryAlzheimers": family,
     "CardiovascularDisease": cardio,
     "Diabetes": diabetes,
     "Depression": depression,
-    "HeadInjury": head_injury,
+    "HeadInjury": headinjury,
     "Hypertension": hypertension,
-    "SystolicBP": systolic,
-    "DiastolicBP": diastolic,
+    "SystolicBP": sbp,
+    "DiastolicBP": dbp,
     "CholesterolTotal": chol_total,
     "CholesterolLDL": chol_ldl,
     "CholesterolHDL": chol_hdl,
-    "CholesterolTriglycerides": triglycerides,
+    "CholesterolTriglycerides": trig,
     "MMSE": mmse,
     "FunctionalAssessment": functional,
-    "MemoryComplaints": memory_complaints,
-    "BehavioralProblems": behavioral,
+    "MemoryComplaints": memory,
+    "BehavioralProblems": behavior,
     "ADL": adl,
-    "Confusion": confusion,
-    "Disorientation": disorientation,
-    "PersonalityChanges": personality_changes,
-    "DifficultyCompletingTasks": difficulty_tasks,
-    "Forgetfulness": forgetfulness
+    "Confusion": conf,
+    "Disorientation": disorient,
+    "PersonalityChanges": personality,
+    "DifficultyCompletingTasks": tasks,
+    "Forgetfulness": forget
 }
 
 numeric_cols = [
@@ -181,45 +220,26 @@ numeric_cols = [
     "CholesterolTriglycerides","MMSE","FunctionalAssessment","ADL"
 ]
 
-if st.button("Predict"):
-    with st.spinner("Predicting..."):
-        pred, proba = predict_and_proba(model, scaler, input_dict, numeric_cols, features_order)
-        label, color = risk_label(proba)
+# ---------------------------------------------------
+# Predict Button
+# ---------------------------------------------------
 
-        # --- SAFELY format label for display (no escaping issues) ---
-        display_label = "Alzheimer's" if pred == 1 else "No Alzheimer"
-        st.markdown(f"### Prediction: **{display_label}**")
+if st.button("Predict Alzheimer’s Risk"):
+    pred, proba = predict_and_proba(model, scaler, input_dict, numeric_cols, features_order)
 
-        if proba is not None:
-            st.markdown(f"**Risk probability:** {proba:.3f}")
+    label, color = risk_label(proba)
 
-        # colored risk strip
-        st.markdown(
-            f"<div style='padding:10px;background:{color};color:white;border-radius:6px;display:inline-block'>{label}</div>",
-            unsafe_allow_html=True
-        )
+    st.markdown(f"### Prediction: **{'Alzheimer’s' if pred==1 else 'No Alzheimer’s'}**")
+    if proba is not None:
+        st.markdown(f"### Risk Probability: `{proba:.3f}`")
+    st.markdown(f"<div style='padding:10px;background:{color};color:white;border-radius:6px'>{label}</div>", unsafe_allow_html=True)
 
-        st.subheader("Input Summary")
-        st.dataframe(pd.DataFrame([input_dict]))
+    st.subheader("Input Summary")
+    st.dataframe(pd.DataFrame([input_dict]))
 
-        if hasattr(model, "feature_importances_"):
-            # try to map feature importances to features_order length
-            try:
-                imp = pd.Series(model.feature_importances_, index=features_order).sort_values(ascending=False)[:10]
-                st.subheader("Top features (model importance)")
-                st.bar_chart(imp)
-            except Exception:
-                # fallback if lengths mismatch
-                st.info("Model has feature_importances_ but mapping failed (length mismatch).")
 else:
-    st.info("Fill patient features in the sidebar and click Predict.")
+    st.info("Fill the sidebar and click **Predict Alzheimer’s Risk**.")
 
-st.markdown("---")
-st.caption("This app uses the trained Gradient Boosting model and StandardScaler.")
-st.markdown("Built by Pushpam K. Kumari")
-
-# ---------------------------------------------------
 # Footer
-# ---------------------------------------------------
 st.markdown("---")
-st.caption("👩‍💻 Built by Pushpam Kumari | Model: Gradient Boosting | Deployed on Streamlit Cloud 🌐")
+st.caption("👩‍💻 Built by Pushpam Kumari | Alzheimer’s Disease ML Classifier | Streamlit Deployment")
