@@ -11,6 +11,10 @@ This repository contains a Streamlit app for predicting Alzheimer's Disease usin
 - README.md
 - Place your best_alzheimers_model.pkl and scaler_alzheimers.pkl in the repo root before deploying.
 
+## Live Streamlit App  
+**https://your-streamlit-app-link.streamlit.app/** 
+
+
 ## Run locally
 pip install -r requirements.txt
 streamlit run app.py
