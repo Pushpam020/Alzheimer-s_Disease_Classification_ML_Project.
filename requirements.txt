@@ -1,9 +1,7 @@
-streamlit==1.25.0
-pandas
-numpy
-scikit-learn
-joblib
-matplotlib
-seaborn
-xgboost
-imbalanced-learn
+streamlit>=1.22
+pandas>=1.5
+numpy>=1.24
+scikit-learn>=1.2
+matplotlib>=3.5
+seaborn>=0.12
+lightgbm>=3.3
