@@ -1,7 +1,8 @@
-streamlit>=1.22
-pandas>=1.5
-numpy>=1.24
-scikit-learn>=1.2
-matplotlib>=3.5
-seaborn>=0.12
-lightgbm>=3.3
+streamlit==1.46.1
+pandas==2.2.3
+numpy==1.26.4
+scikit-learn==1.4.2
+joblib==1.4.2
+matplotlib==3.10.3
+seaborn==0.13.2
+lightgbm==4.6.0
