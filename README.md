@@ -8,8 +8,8 @@ This repository contains a Streamlit app for predicting Alzheimer's Disease usin
 ## Files
 - `app.py` – Streamlit UI (loads scaler + model and predicts)
 - `requirements.txt` – Python dependencies
-- `best_model.pkl` – (add your trained best model here)
-- `scaler.pkl` – (add your fitted StandardScaler here)
+- `best_alzheimers_model.pkl` – (add your trained best model here)
+- `scaler_alzheimers.pkl` – (add your fitted StandardScaler here)
 
 ## How to run locally
 ```bash
